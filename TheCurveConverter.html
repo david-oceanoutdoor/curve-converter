@@ -48,11 +48,6 @@
     <div><label>Horizontal gap</label><input type="number" id="gx" value="16" min="0"></div>
     <div><label>Last horizontal gap</label><input type="number" id="gxl" value="16" min="0"></div>
     <div><label>Vertical gap</label><input type="number" id="gy" value="16" min="0"></div>
-    <div><label>Video method</label>
-      <select id="vmode">
-        <option value="exact">Frame-accurate (no stutter, no audio)</option>
-        <option value="realtime">Real-time (keeps audio, may stutter)</option>
-      </select></div>
     <div><label>Video frame rate (fps)</label><input type="number" id="fps" value="25" min="1" step="any"></div>
     <div><label>Squeeze width (px)</label><input type="number" id="sqw" value="3840" min="1"></div>
     <div><label>Video bitrate (Mbps)</label><input type="number" id="mbps" value="15" min="0.5" step="any"></div>
@@ -70,7 +65,7 @@
   <div id="status"></div>
   <a id="dl">Download result</a>
   <canvas id="out"></canvas>
-  <div class="note"><b>Frame-accurate</b> steps through the video one frame at a time and encodes to MP4 (H.264) with WebCodecs, so playback stutter can't affect the result. It's slower than real time and drops the audio. Set the fps to match your source. <b>Real-time</b> records playback live, keeps audio, but drops frames if your machine can't keep up. Keep this tab in the foreground either way. For masters, use the ffmpeg script or the After Effects scripts.</div>
+  <div class="note">Videos are processed one frame at a time and encoded to MP4 (H.264) with WebCodecs, so playback stutter can't affect the result. Output has no audio track. Set the fps to match your source, and keep this tab in the foreground. For masters, use the ffmpeg script or the After Effects scripts.</div>
 </div>
 
 <script>
@@ -179,10 +174,7 @@ $('go').onclick = async () => {
   if (c.cols < 2) { alert('Need at least 2 columns.'); return; }
   $('go').disabled = true;
   try {
-    if (file.type.startsWith('video/')) {
-      if ($('vmode').value === 'exact') await processVideoExact(c);
-      else await processVideo(c);
-    }
+    if (file.type.startsWith('video/')) await processVideo(c);
     else await processImage(c);
   } catch (e) {
     $('status').textContent = 'Error: ' + e.message;
@@ -204,71 +196,6 @@ async function processImage(c) {
   const base = file.name.replace(/\.[^.]+$/, '');
   showDownload(blob, `${base}-${dirTag(c)}.png`);
   $('status').textContent = `Done: ${c.outW} × ${c.outH} PNG.`;
-}
-
-// ---- video ----
-async function processVideo(c) {
-  const video = document.createElement('video');
-  video.src = URL.createObjectURL(file);
-  video.playsInline = true;
-  video.preload = 'auto';
-  await new Promise((res, rej) => { video.onloadedmetadata = res; video.onerror = () => rej(new Error('Could not read video.')); });
-  if (!prepVideo(c, video)) return;
-
-  const cv = $('out');
-  cv.width = c.outW; cv.height = c.outH; cv.style.display = 'block';
-  const ctx = cv.getContext('2d');
-  ctx.imageSmoothingEnabled = false;
-  const list = tiles(c);
-
-  const types = ['video/mp4;codecs=avc1', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
-  const mime = types.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t));
-  if (!mime) throw new Error('This browser cannot record video. Try Chrome or Edge.');
-
-  const stream = cv.captureStream();
-  try {
-    const ac = new AudioContext();
-    const node = ac.createMediaElementSource(video);
-    const dest = ac.createMediaStreamDestination();
-    node.connect(dest);
-    dest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
-  } catch (e) { /* no audio track; continue */ }
-
-  const chunks = [];
-  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bitrate() });
-  rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
-  let recErr = null;
-  rec.onerror = e => { recErr = e.error || new Error('Recording failed.'); };
-  const stopped = new Promise(r => rec.onstop = r);
-
-  const prog = $('prog');
-  prog.style.display = 'block';
-  let running = true;
-  const draw = () => {
-    drawFrame(video, ctx, list, c, true);
-    prog.value = video.duration ? video.currentTime / video.duration : 0;
-    $('status').textContent = `Processing… ${Math.round(prog.value * 100)}%`;
-  };
-  const loop = () => {
-    if (!running) return;
-    draw();
-    if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(loop);
-    else requestAnimationFrame(loop);
-  };
-  video.onended = () => { running = false; draw(); setTimeout(() => rec.stop(), 300); };
-
-  rec.start(1000);
-  await video.play();
-  loop();
-  await stopped;
-
-  prog.style.display = 'none';
-  if (recErr) throw recErr;
-  if (!chunks.length) throw new Error('The recording came out empty. Try Frame-accurate mode.');
-  const ext = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
-  const base = file.name.replace(/\.[^.]+$/, '');
-  showDownload(new Blob(chunks, { type: mime }), `${base}-${dirTag(c)}.${ext}`);
-  $('status').textContent = `Done: ${c.outW} × ${c.outH} ${ext.toUpperCase()}.`;
 }
 
 const dirTag = c => (c.mode === 'remove' ? 'remove-gaps' : c.mode === 'add' ? 'add-gaps' : c.mode === 'squeeze' ? 'squeezed' : 'compressed');
@@ -296,9 +223,9 @@ function avcCodec(w, h, fps) {
   return 'avc1.6400' + lv[0].toString(16).padStart(2, '0');
 }
 
-// ---- video, frame-accurate (WebCodecs, no real-time playback) ----
-async function processVideoExact(c) {
-  if (!window.VideoEncoder) throw new Error('WebCodecs not available. Use Chrome or Edge, or switch to Real-time.');
+// ---- video (frame-accurate: WebCodecs, no real-time playback) ----
+async function processVideo(c) {
+  if (!window.VideoEncoder) throw new Error('WebCodecs not available. Use Chrome or Edge.');
   const fps = +$('fps').value;
   if (!(fps > 0)) throw new Error('Enter a valid frame rate.');
 
@@ -319,7 +246,7 @@ async function processVideoExact(c) {
 
   const encConfig = { codec: avcCodec(c.outW, c.outH, fps), width: c.outW, height: c.outH, bitrate: bitrate(), framerate: fps };
   const support = await VideoEncoder.isConfigSupported(encConfig);
-  if (!support.supported) throw new Error(`This browser can't encode H.264 at ${c.outW}×${c.outH} (${encConfig.codec}). Use Chrome or Edge, or switch to Real-time.`);
+  if (!support.supported) throw new Error(`This browser can't encode H.264 at ${c.outW}×${c.outH} (${encConfig.codec}). Use Chrome or Edge.`);
 
   const target = new ArrayBufferTarget();
   const muxer = new Muxer({ target, video: { codec: 'avc', width: c.outW, height: c.outH }, fastStart: 'in-memory' });
@@ -357,7 +284,7 @@ async function processVideoExact(c) {
 
   const base = file.name.replace(/\.[^.]+$/, '');
   showDownload(new Blob([target.buffer], { type: 'video/mp4' }), `${base}-${dirTag(c)}.mp4`);
-  $('status').textContent = `Done: ${c.outW} × ${c.outH} MP4, ${total} frames at ${fps} fps (no audio).`;
+  $('status').textContent = `Done: ${c.outW} × ${c.outH} MP4, ${total} frames at ${fps} fps.`;
 }
 </script>
 <!-- mp4-muxer 5.2.2 (https://github.com/Vanilagy/mp4-muxer), bundled so the tool works offline.
