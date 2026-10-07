@@ -5,9 +5,9 @@ Single-file, client-side tool (`TheCurveConverter.html`) for a 12×3 tile grid o
 access needed (the MP4 muxer is bundled into the page).
 
 ## Modes (Direction dropdown)
-- **Remove gaps:** gapped → clean (default 4064×2192 → 3888×2160, 16px gaps)
+- **Squeeze:** 3888×2160 → squeezed to 3840 wide + 48px black pad on the right, output 3888×2160. Selected by default.
+- **Remove gaps:** gapped → clean (4064×2192 → 3888×2160 with the default 16px gaps)
 - **Add gaps:** clean → gapped (reverse). For stills the gaps are transparent in the PNG.
-- **Squeeze:** 3888×2160 → squeezed to 3840 wide + 48px black pad on the right, output 3888×2160
 - **Compress only:** video re-encode at the chosen bitrate, no layout change (video only)
 
 ## Settings (collapsed under "Settings")
