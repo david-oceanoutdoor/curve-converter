@@ -10,6 +10,10 @@ access needed (the MP4 muxer is bundled into the page).
 - **Add gaps:** clean → gapped (reverse). For stills the gaps are transparent in the PNG.
 - **Compress only:** video re-encode at the chosen bitrate, no layout change (video only)
 
+## Content (dropdown under Direction)
+Sets the video bitrate: **Full-motion video** → 15 Mbps (default), **Mostly stills** → 5 Mbps.
+The bitrate can still be fine-tuned by hand under Settings.
+
 ## Settings (collapsed under "Settings")
 Columns, rows, tile size, horizontal gap, "last horizontal gap" (for the 4010px layout:
 11px gaps with the final one 12px, vertical 16px), fps, bitrate (Mbps, default 15),

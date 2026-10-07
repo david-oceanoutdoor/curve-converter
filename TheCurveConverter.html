@@ -38,6 +38,11 @@
     <option value="compress">Compress only (video, keeps layout)</option>
   </select>
   <div id="sizes" class="note"></div>
+  <label style="margin-top:12px">Content</label>
+  <select id="content">
+    <option value="15">Full-motion video (15 Mbps)</option>
+    <option value="5">Mostly stills (5 Mbps)</option>
+  </select>
   <details style="margin-top:12px">
   <summary style="cursor:pointer;font-size:13px;color:#555">Settings</summary>
   <div class="grid" style="margin-top:10px">
@@ -131,6 +136,7 @@ function refreshSizes() {
   $('sizes').textContent = `Expected input ${c.inW} × ${c.inH}  →  output ${c.outW} × ${c.outH}  (${c.cols * c.rows} tiles)`;
 }
 ['mode','cols','rows','cw','ch','gx','gxl','gy','mbps','sqw'].forEach(id => $(id).addEventListener('input', refreshSizes));
+$('content').addEventListener('input', () => { $('mbps').value = $('content').value; refreshSizes(); });
 $('gx').addEventListener('input', () => { if ($('gxl').dataset.touched !== '1') $('gxl').value = $('gx').value; refreshSizes(); });
 $('gxl').addEventListener('input', () => { $('gxl').dataset.touched = '1'; });
 refreshSizes();
