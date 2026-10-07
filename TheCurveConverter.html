@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The Curve Converter</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { font-family: -apple-system, system-ui, sans-serif; color: #1a1a1a; background: #f4f5f7; }
+  body { max-width: 960px; margin: 24px auto; padding: 0 16px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 16px; color: #555; font-size: 13px; }
+  .card { background: #fff; border: 1px solid #dde0e5; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; }
+  label { font-size: 12px; color: #555; display: block; }
+  input[type=number], select { width: 100%; box-sizing: border-box; padding: 6px; font-size: 14px; border: 1px solid #c8ccd3; border-radius: 6px; }
+  #drop { border: 2px dashed #9aa3b2; border-radius: 10px; padding: 36px 16px; text-align: center; color: #555; cursor: pointer; }
+  #drop.over { background: #eaf1ff; border-color: #3b7cff; }
+  button { background: #3b7cff; color: #fff; border: 0; border-radius: 8px; padding: 10px 18px; font-size: 14px; cursor: pointer; }
+  button:disabled { background: #a9b8d6; cursor: default; }
+  #info, #status { font-size: 13px; color: #444; margin-top: 10px; }
+  #info.warn { color: #b25a00; }
+  progress { width: 100%; height: 14px; margin-top: 10px; display: none; }
+  canvas { max-width: 100%; height: auto; border: 1px solid #dde0e5; background: #222; margin-top: 12px; display: none; }
+  a#dl { display: none; margin-top: 12px; }
+  .note { font-size: 12px; color: #666; margin-top: 8px; line-height: 1.4; }
+</style>
+</head>
+<body>
+<h1>The Curve Converter</h1>
+<p class="sub">Cuts an image or video into a tile grid and rebuilds it with the gaps removed or added. Runs entirely in your browser; nothing is uploaded.</p>
+
+<div class="card">
+  <label>Direction</label>
+  <select id="mode">
+    <option value="remove">Remove gaps (gapped → clean)</option>
+    <option value="add">Add gaps (clean → gapped)</option>
+    <option value="squeeze">Squeeze to 3840 + black pad (3888 → 3840 + 48px)</option>
+    <option value="compress">Compress only (video, keeps layout)</option>
+  </select>
+  <div id="sizes" class="note"></div>
+  <details style="margin-top:12px">
+  <summary style="cursor:pointer;font-size:13px;color:#555">Settings</summary>
+  <div class="grid" style="margin-top:10px">
+    <div><label>Columns</label><input type="number" id="cols" value="12" min="2"></div>
+    <div><label>Rows</label><input type="number" id="rows" value="3" min="1"></div>
+    <div><label>Tile width</label><input type="number" id="cw" value="324" min="1"></div>
+    <div><label>Tile height</label><input type="number" id="ch" value="720" min="1"></div>
+    <div><label>Horizontal gap</label><input type="number" id="gx" value="16" min="0"></div>
+    <div><label>Last horizontal gap</label><input type="number" id="gxl" value="16" min="0"></div>
+    <div><label>Vertical gap</label><input type="number" id="gy" value="16" min="0"></div>
+    <div><label>Video method</label>
+      <select id="vmode">
+        <option value="exact">Frame-accurate (no stutter, no audio)</option>
+        <option value="realtime">Real-time (keeps audio, may stutter)</option>
+      </select></div>
+    <div><label>Video frame rate (fps)</label><input type="number" id="fps" value="25" min="1" step="any"></div>
+    <div><label>Squeeze width (px)</label><input type="number" id="sqw" value="3840" min="1"></div>
+    <div><label>Video bitrate (Mbps)</label><input type="number" id="mbps" value="15" min="0.5" step="any"></div>
+  </div>
+  <div class="note">For the 11px layout, set Horizontal gap 11, Last horizontal gap 12, Vertical gap 16 (gapped size 4010 × 2192).</div>
+  </details>
+</div>
+
+<div class="card">
+  <div id="drop">Drop an image or video here, or click to choose a file</div>
+  <input type="file" id="file" accept="image/*,video/*" style="display:none">
+  <div id="info"></div>
+  <div style="margin-top:12px"><button id="go" disabled>Process</button></div>
+  <progress id="prog" value="0" max="1"></progress>
+  <div id="status"></div>
+  <a id="dl">Download result</a>
+  <canvas id="out"></canvas>
+  <div class="note"><b>Frame-accurate</b> steps through the video one frame at a time and encodes to MP4 (H.264) with WebCodecs, so playback stutter can't affect the result. It's slower than real time, drops the audio, and needs an internet connection to load the MP4 muxer library. Set the fps to match your source. <b>Real-time</b> records playback live, keeps audio, but drops frames if your machine can't keep up. Keep this tab in the foreground either way. For masters, use the ffmpeg script or the After Effects scripts.</div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let file = null;
+
+function cfg() {
+  const c = {
+    mode: $('mode').value,
+    cols: +$('cols').value, rows: +$('rows').value,
+    cw: +$('cw').value, ch: +$('ch').value,
+    gx: +$('gx').value, gxl: +$('gxl').value, gy: +$('gy').value
+  };
+  c.gappedW = c.cols * c.cw + (c.cols - 2) * c.gx + c.gxl;
+  c.gappedH = c.rows * c.ch + (c.rows - 1) * c.gy;
+  c.cleanW = c.cols * c.cw;
+  c.cleanH = c.rows * c.ch;
+  const remove = c.mode === 'remove';
+  c.inW = remove ? c.gappedW : c.cleanW;   c.inH = remove ? c.gappedH : c.cleanH;
+  c.outW = remove ? c.cleanW : c.gappedW;  c.outH = remove ? c.cleanH : c.gappedH;
+  if (c.mode === 'squeeze') {              // same size in and out
+    c.sqW = +$('sqw').value;
+    c.inW = c.outW = c.cleanW;  c.inH = c.outH = c.cleanH;
+  }
+  return c;
+}
+
+function tiles(c) {
+  if (c.mode === 'compress' || c.mode === 'squeeze') return [[0, 0, 0, 0]];   // one full-frame "tile"
+  const gappedX = col => col * (c.cw + c.gx) + (col === c.cols - 1 ? c.gxl - c.gx : 0);
+  const gappedY = row => row * (c.ch + c.gy);
+  const list = [];
+  for (let r = 0; r < c.rows; r++) for (let k = 0; k < c.cols; k++) {
+    const g = [gappedX(k), gappedY(r)], n = [k * c.cw, r * c.ch];
+    list.push(c.mode === 'remove' ? [...g, ...n] : [...n, ...g]);
+  }
+  return list;
+}
+
+function drawFrame(src, ctx, list, c, fillBg) {
+  if (c.mode === 'squeeze') {
+    // Horizontal squeeze to sqW, black padding fills the rest on the right
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, c.outW, c.outH);
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(src, 0, 0, c.inW, c.inH, 0, 0, c.sqW, c.outH);
+    return;
+  }
+  if (fillBg) { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, c.outW, c.outH); }
+  else ctx.clearRect(0, 0, c.outW, c.outH);
+  for (const [sx, sy, dx, dy] of list) ctx.drawImage(src, sx, sy, c.cw, c.ch, dx, dy, c.cw, c.ch);
+}
+
+function refreshSizes() {
+  const c = cfg();
+  if (c.mode === 'squeeze') {
+    $('sizes').textContent = `Expected input ${c.inW} × ${c.inH}  →  squeezed to ${c.sqW} × ${c.outH} + ${c.outW - c.sqW}px black on the right  =  ${c.outW} × ${c.outH}`;
+    return;
+  }
+  if (c.mode === 'compress') {
+    $('sizes').textContent = `Output keeps the source size and layout; re-encoded at ${$('mbps').value} Mbps (set in Settings).`;
+    return;
+  }
+  $('sizes').textContent = `Expected input ${c.inW} × ${c.inH}  →  output ${c.outW} × ${c.outH}  (${c.cols * c.rows} tiles)`;
+}
+['mode','cols','rows','cw','ch','gx','gxl','gy','mbps','sqw'].forEach(id => $(id).addEventListener('input', refreshSizes));
+$('gx').addEventListener('input', () => { if ($('gxl').dataset.touched !== '1') $('gxl').value = $('gx').value; refreshSizes(); });
+$('gxl').addEventListener('input', () => { $('gxl').dataset.touched = '1'; });
+refreshSizes();
+
+// ---- file selection ----
+const drop = $('drop');
+drop.onclick = () => $('file').click();
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); setFile(e.dataTransfer.files[0]); };
+$('file').onchange = e => setFile(e.target.files[0]);
+
+function setFile(f) {
+  if (!f) return;
+  file = f;
+  $('info').textContent = `${f.name} (${(f.size / 1048576).toFixed(1)} MB)`;
+  $('info').className = '';
+  $('go').disabled = false;
+  $('dl').style.display = 'none';
+}
+
+function checkSize(w, h, c) {
+  if (w !== c.inW || h !== c.inH) {
+    $('info').textContent += `  —  size ${w}×${h}, but settings expect ${c.inW}×${c.inH}`;
+    $('info').className = 'warn';
+    return confirm(`Input is ${w}×${h} but the settings expect ${c.inW}×${c.inH}. Continue anyway?`);
+  }
+  return true;
+}
+
+function showDownload(blob, name) {
+  const a = $('dl');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.textContent = `Download ${name}`;
+  a.style.display = 'inline-block';
+}
+
+$('go').onclick = async () => {
+  const c = cfg();
+  if (c.cols < 2) { alert('Need at least 2 columns.'); return; }
+  $('go').disabled = true;
+  try {
+    if (file.type.startsWith('video/')) {
+      if ($('vmode').value === 'exact') await processVideoExact(c);
+      else await processVideo(c);
+    }
+    else await processImage(c);
+  } catch (e) {
+    $('status').textContent = 'Error: ' + e.message;
+  }
+  $('go').disabled = false;
+};
+
+// ---- stills ----
+async function processImage(c) {
+  if (c.mode === 'compress') throw new Error('Compress only works on video files.');
+  const bmp = await createImageBitmap(file);
+  if (!checkSize(bmp.width, bmp.height, c)) return;
+  const cv = $('out');
+  cv.width = c.outW; cv.height = c.outH; cv.style.display = 'block';
+  const ctx = cv.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  drawFrame(bmp, ctx, tiles(c), c, false);
+  const blob = await new Promise(r => cv.toBlob(r, 'image/png'));
+  const base = file.name.replace(/\.[^.]+$/, '');
+  showDownload(blob, `${base}-${dirTag(c)}.png`);
+  $('status').textContent = `Done: ${c.outW} × ${c.outH} PNG.`;
+}
+
+// ---- video ----
+async function processVideo(c) {
+  const video = document.createElement('video');
+  video.src = URL.createObjectURL(file);
+  video.playsInline = true;
+  video.preload = 'auto';
+  await new Promise((res, rej) => { video.onloadedmetadata = res; video.onerror = () => rej(new Error('Could not read video.')); });
+  if (!prepVideo(c, video)) return;
+
+  const cv = $('out');
+  cv.width = c.outW; cv.height = c.outH; cv.style.display = 'block';
+  const ctx = cv.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  const list = tiles(c);
+
+  const types = ['video/mp4;codecs=avc1', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+  const mime = types.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported(t));
+  if (!mime) throw new Error('This browser cannot record video. Try Chrome or Edge.');
+
+  const stream = cv.captureStream();
+  try {
+    const ac = new AudioContext();
+    const node = ac.createMediaElementSource(video);
+    const dest = ac.createMediaStreamDestination();
+    node.connect(dest);
+    dest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
+  } catch (e) { /* no audio track; continue */ }
+
+  const chunks = [];
+  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bitrate() });
+  rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+  const stopped = new Promise(r => rec.onstop = r);
+
+  const prog = $('prog');
+  prog.style.display = 'block';
+  let running = true;
+  const draw = () => {
+    drawFrame(video, ctx, list, c, true);
+    prog.value = video.duration ? video.currentTime / video.duration : 0;
+    $('status').textContent = `Processing… ${Math.round(prog.value * 100)}%`;
+  };
+  const loop = () => {
+    if (!running) return;
+    draw();
+    if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(loop);
+    else requestAnimationFrame(loop);
+  };
+  video.onended = () => { running = false; draw(); setTimeout(() => rec.stop(), 300); };
+
+  rec.start(1000);
+  await video.play();
+  loop();
+  await stopped;
+
+  prog.style.display = 'none';
+  const ext = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
+  const base = file.name.replace(/\.[^.]+$/, '');
+  showDownload(new Blob(chunks, { type: mime }), `${base}-${dirTag(c)}.${ext}`);
+  $('status').textContent = `Done: ${c.outW} × ${c.outH} ${ext.toUpperCase()}.`;
+}
+
+const dirTag = c => (c.mode === 'remove' ? 'remove-gaps' : c.mode === 'add' ? 'add-gaps' : c.mode === 'squeeze' ? 'squeezed' : 'compressed');
+
+// Compress-only: output = source size, one full-frame copy. Otherwise validate size.
+function prepVideo(c, video) {
+  if (c.mode === 'compress') {
+    c.inW = c.outW = c.cw = video.videoWidth;
+    c.inH = c.outH = c.ch = video.videoHeight;
+    return true;
+  }
+  return checkSize(video.videoWidth, video.videoHeight, c);
+}
+
+const bitrate = () => Math.round((+$('mbps').value || 15) * 1e6);
+
+// ---- video, frame-accurate (WebCodecs, no real-time playback) ----
+async function processVideoExact(c) {
+  if (!window.VideoEncoder) throw new Error('WebCodecs not available. Use Chrome or Edge, or switch to Real-time.');
+  const fps = +$('fps').value;
+  if (!(fps > 0)) throw new Error('Enter a valid frame rate.');
+
+  $('status').textContent = 'Loading MP4 muxer…';
+  const { Muxer, ArrayBufferTarget } = await import('https://cdn.jsdelivr.net/npm/mp4-muxer@5/+esm');
+
+  const video = document.createElement('video');
+  video.src = URL.createObjectURL(file);
+  video.muted = true;
+  video.preload = 'auto';
+  await new Promise((res, rej) => { video.onloadedmetadata = res; video.onerror = () => rej(new Error('Could not read video.')); });
+  if (!prepVideo(c, video)) return;
+
+  const cv = $('out');
+  cv.width = c.outW; cv.height = c.outH; cv.style.display = 'block';
+  const ctx = cv.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  const list = tiles(c);
+
+  const target = new ArrayBufferTarget();
+  const muxer = new Muxer({ target, video: { codec: 'avc', width: c.outW, height: c.outH }, fastStart: 'in-memory' });
+  let encErr = null;
+  const encoder = new VideoEncoder({
+    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+    error: e => { encErr = e; }
+  });
+  encoder.configure({
+    codec: 'avc1.640033',            // H.264 High, level 5.1 (fits up to 4096×2304)
+    width: c.outW, height: c.outH,
+    bitrate: bitrate(),
+    framerate: fps
+  });
+
+  const total = Math.floor(video.duration * fps);
+  const prog = $('prog');
+  prog.style.display = 'block';
+
+  for (let i = 0; i < total; i++) {
+    if (encErr) throw encErr;
+    // Seek to the middle of frame i so we land on the right frame
+    const seeked = new Promise(r => video.addEventListener('seeked', r, { once: true }));
+    video.currentTime = (i + 0.5) / fps;
+    await seeked;
+
+    drawFrame(video, ctx, list, c, true);
+    const frame = new VideoFrame(cv, { timestamp: Math.round(i * 1e6 / fps), duration: Math.round(1e6 / fps) });
+    encoder.encode(frame, { keyFrame: i % 120 === 0 });
+    frame.close();
+
+    while (encoder.encodeQueueSize > 6) await new Promise(r => setTimeout(r, 5));
+    prog.value = i / total;
+    if (i % 5 === 0) $('status').textContent = `Frame ${i + 1} / ${total}`;
+  }
+
+  await encoder.flush();
+  muxer.finalize();
+  prog.style.display = 'none';
+
+  const base = file.name.replace(/\.[^.]+$/, '');
+  showDownload(new Blob([target.buffer], { type: 'video/mp4' }), `${base}-${dirTag(c)}.mp4`);
+  $('status').textContent = `Done: ${c.outW} × ${c.outH} MP4, ${total} frames at ${fps} fps (no audio).`;
+}
+</script>
+</body>
+</html>
