@@ -4,6 +4,10 @@ Single-file, client-side tool (`TheCurveConverter.html`) for a 12×3 tile grid o
 (LED/DOOH panel layout). Everything runs in the browser; no uploads, no backend, no network
 access needed (the MP4 muxer is bundled into the page).
 
+**Use it online:** https://david-oceanoutdoor.github.io/curve-converter/ (GitHub Pages, published
+from `main`; `index.html` forwards to `TheCurveConverter.html`). Files you open are still processed
+only in your browser.
+
 ## Modes (Direction dropdown)
 - **Squeeze:** 3888×2160 → squeezed to 3840 wide + 48px black pad on the right, output 3888×2160. Selected by default.
 - **Remove gaps:** gapped → clean (4064×2192 → 3888×2160 with the default 16px gaps)
