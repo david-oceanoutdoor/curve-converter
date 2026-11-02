@@ -36,8 +36,17 @@
     <option value="remove">Remove gaps (gapped → clean)</option>
     <option value="add">Add gaps (clean → gapped)</option>
     <option value="compress">Compress only (video, keeps layout)</option>
+    <option value="still">Still image → MP4 (keeps size)</option>
   </select>
   <div id="sizes" class="note"></div>
+  <div id="lenRow" style="display:none">
+    <label style="margin-top:12px">Length</label>
+    <select id="len">
+      <option value="10">10 seconds</option>
+      <option value="20">20 seconds</option>
+      <option value="30">30 seconds</option>
+    </select>
+  </div>
   <label style="margin-top:12px">Content</label>
   <select id="content">
     <option value="15">Full-motion video (15 Mbps)</option>
@@ -82,7 +91,8 @@ function cfg() {
     mode: $('mode').value,
     cols: +$('cols').value, rows: +$('rows').value,
     cw: +$('cw').value, ch: +$('ch').value,
-    gx: +$('gx').value, gxl: +$('gxl').value, gy: +$('gy').value
+    gx: +$('gx').value, gxl: +$('gxl').value, gy: +$('gy').value,
+    len: +$('len').value
   };
   c.gappedW = c.cols * c.cw + (c.cols - 2) * c.gx + c.gxl;
   c.gappedH = c.rows * c.ch + (c.rows - 1) * c.gy;
@@ -99,7 +109,7 @@ function cfg() {
 }
 
 function tiles(c) {
-  if (c.mode === 'compress' || c.mode === 'squeeze') return [[0, 0, 0, 0]];   // one full-frame "tile"
+  if (c.mode === 'compress' || c.mode === 'squeeze' || c.mode === 'still') return [[0, 0, 0, 0]];   // one full-frame "tile"
   const gappedX = col => col * (c.cw + c.gx) + (col === c.cols - 1 ? c.gxl - c.gx : 0);
   const gappedY = row => row * (c.ch + c.gy);
   const list = [];
@@ -133,9 +143,14 @@ function refreshSizes() {
     $('sizes').textContent = `Output keeps the source size and layout; re-encoded at ${$('mbps').value} Mbps (set in Settings).`;
     return;
   }
+  if (c.mode === 'still') {
+    $('sizes').textContent = `JPG or PNG in  →  ${$('len').value}-second MP4 at the image's own size, ${$('fps').value} fps, ${$('mbps').value} Mbps.`;
+    return;
+  }
   $('sizes').textContent = `Expected input ${c.inW} × ${c.inH}  →  output ${c.outW} × ${c.outH}  (${c.cols * c.rows} tiles)`;
 }
-['mode','cols','rows','cw','ch','gx','gxl','gy','mbps','sqw'].forEach(id => $(id).addEventListener('input', refreshSizes));
+['mode','cols','rows','cw','ch','gx','gxl','gy','mbps','sqw','fps','len'].forEach(id => $(id).addEventListener('input', refreshSizes));
+$('mode').addEventListener('input', () => { $('lenRow').style.display = $('mode').value === 'still' ? '' : 'none'; });
 $('content').addEventListener('input', () => { $('mbps').value = $('content').value; refreshSizes(); });
 $('gx').addEventListener('input', () => { if ($('gxl').dataset.touched !== '1') $('gxl').value = $('gx').value; refreshSizes(); });
 $('gxl').addEventListener('input', () => { $('gxl').dataset.touched = '1'; });
@@ -180,7 +195,8 @@ $('go').onclick = async () => {
   if (c.cols < 2) { alert('Need at least 2 columns.'); return; }
   $('go').disabled = true;
   try {
-    if (file.type.startsWith('video/')) await processVideo(c);
+    if (c.mode === 'still') await processStillToVideo(c);
+    else if (file.type.startsWith('video/')) await processVideo(c);
     else await processImage(c);
   } catch (e) {
     $('status').textContent = 'Error: ' + e.message;
@@ -204,7 +220,7 @@ async function processImage(c) {
   $('status').textContent = `Done: ${c.outW} × ${c.outH} PNG.`;
 }
 
-const dirTag = c => (c.mode === 'remove' ? 'remove-gaps' : c.mode === 'add' ? 'add-gaps' : c.mode === 'squeeze' ? 'squeezed' : 'compressed');
+const dirTag = c => (c.mode === 'remove' ? 'remove-gaps' : c.mode === 'add' ? 'add-gaps' : c.mode === 'squeeze' ? 'squeezed' : c.mode === 'still' ? `${c.len}s` : 'compressed');
 
 // Compress-only: output = source size, one full-frame copy. Otherwise validate size.
 function prepVideo(c, video) {
@@ -229,13 +245,50 @@ function avcCodec(w, h, fps) {
   return 'avc1.6400' + lv[0].toString(16).padStart(2, '0');
 }
 
-// ---- video (frame-accurate: WebCodecs, no real-time playback) ----
-async function processVideo(c) {
+// H.264 MP4 writer shared by the video and still-to-video paths.
+// add(canvas, i) encodes frame i; finish() returns the MP4 blob.
+async function openMp4(w, h, fps) {
+  const encConfig = { codec: avcCodec(w, h, fps), width: w, height: h, bitrate: bitrate(), framerate: fps };
+  const support = await VideoEncoder.isConfigSupported(encConfig);
+  if (!support.supported) throw new Error(`This browser can't encode H.264 at ${w}×${h} (${encConfig.codec}). Use Chrome or Edge.`);
+
+  const { Muxer, ArrayBufferTarget } = Mp4Muxer;
+  const target = new ArrayBufferTarget();
+  const muxer = new Muxer({ target, video: { codec: 'avc', width: w, height: h }, fastStart: 'in-memory' });
+  let encErr = null;
+  const encoder = new VideoEncoder({
+    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+    error: e => { encErr = e; }
+  });
+  encoder.configure(encConfig);
+
+  return {
+    async add(cv, i) {
+      if (encErr) throw encErr;
+      const frame = new VideoFrame(cv, { timestamp: Math.round(i * 1e6 / fps), duration: Math.round(1e6 / fps) });
+      encoder.encode(frame, { keyFrame: i % 120 === 0 });
+      frame.close();
+      while (encoder.encodeQueueSize > 6) await new Promise(r => setTimeout(r, 5));
+    },
+    async finish() {
+      await encoder.flush();
+      if (encErr) throw encErr;
+      muxer.finalize();
+      return new Blob([target.buffer], { type: 'video/mp4' });
+    }
+  };
+}
+
+function videoFps() {
   if (!window.VideoEncoder) throw new Error('WebCodecs not available. Use Chrome or Edge.');
   const fps = +$('fps').value;
   if (!(fps > 0)) throw new Error('Enter a valid frame rate.');
+  return fps;
+}
 
-  const { Muxer, ArrayBufferTarget } = Mp4Muxer;
+// ---- video (frame-accurate: WebCodecs, no real-time playback) ----
+async function processVideo(c) {
+  const fps = videoFps();
 
   const video = document.createElement('video');
   video.src = URL.createObjectURL(file);
@@ -250,47 +303,63 @@ async function processVideo(c) {
   ctx.imageSmoothingEnabled = false;
   const list = tiles(c);
 
-  const encConfig = { codec: avcCodec(c.outW, c.outH, fps), width: c.outW, height: c.outH, bitrate: bitrate(), framerate: fps };
-  const support = await VideoEncoder.isConfigSupported(encConfig);
-  if (!support.supported) throw new Error(`This browser can't encode H.264 at ${c.outW}×${c.outH} (${encConfig.codec}). Use Chrome or Edge.`);
-
-  const target = new ArrayBufferTarget();
-  const muxer = new Muxer({ target, video: { codec: 'avc', width: c.outW, height: c.outH }, fastStart: 'in-memory' });
-  let encErr = null;
-  const encoder = new VideoEncoder({
-    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-    error: e => { encErr = e; }
-  });
-  encoder.configure(encConfig);
+  const mp4 = await openMp4(c.outW, c.outH, fps);
 
   const total = Math.floor(video.duration * fps);
   const prog = $('prog');
   prog.style.display = 'block';
 
   for (let i = 0; i < total; i++) {
-    if (encErr) throw encErr;
     // Seek to the middle of frame i so we land on the right frame
     const seeked = new Promise(r => video.addEventListener('seeked', r, { once: true }));
     video.currentTime = (i + 0.5) / fps;
     await seeked;
 
     drawFrame(video, ctx, list, c, true);
-    const frame = new VideoFrame(cv, { timestamp: Math.round(i * 1e6 / fps), duration: Math.round(1e6 / fps) });
-    encoder.encode(frame, { keyFrame: i % 120 === 0 });
-    frame.close();
-
-    while (encoder.encodeQueueSize > 6) await new Promise(r => setTimeout(r, 5));
+    await mp4.add(cv, i);
     prog.value = i / total;
     if (i % 5 === 0) $('status').textContent = `Frame ${i + 1} / ${total}`;
   }
 
-  await encoder.flush();
-  muxer.finalize();
+  const blob = await mp4.finish();
   prog.style.display = 'none';
 
   const base = file.name.replace(/\.[^.]+$/, '');
-  showDownload(new Blob([target.buffer], { type: 'video/mp4' }), `${base}-${dirTag(c)}.mp4`);
+  showDownload(blob, `${base}-${dirTag(c)}.mp4`);
   $('status').textContent = `Done: ${c.outW} × ${c.outH} MP4, ${total} frames at ${fps} fps.`;
+}
+
+// ---- still image → MP4: the same frame held for 10/20/30 s at the image's own size ----
+async function processStillToVideo(c) {
+  if (!/^image\/(jpeg|png)$/.test(file.type)) throw new Error('Still image → MP4 needs a JPG or PNG file.');
+  const fps = videoFps();
+  const bmp = await createImageBitmap(file);
+  // H.264 needs even dimensions: an odd width or height gets one black pixel added
+  c.inW = c.cw = bmp.width;  c.inH = c.ch = bmp.height;
+  c.outW = bmp.width + (bmp.width & 1);  c.outH = bmp.height + (bmp.height & 1);
+
+  const cv = $('out');
+  cv.width = c.outW; cv.height = c.outH; cv.style.display = 'block';
+  const ctx = cv.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  drawFrame(bmp, ctx, tiles(c), c, true);   // black behind any PNG transparency
+
+  const mp4 = await openMp4(c.outW, c.outH, fps);
+  const total = Math.round(c.len * fps);
+  const prog = $('prog');
+  prog.style.display = 'block';
+  for (let i = 0; i < total; i++) {
+    await mp4.add(cv, i);
+    prog.value = i / total;
+    if (i % 25 === 0) $('status').textContent = `Frame ${i + 1} / ${total}`;
+  }
+  const blob = await mp4.finish();
+  prog.style.display = 'none';
+
+  const base = file.name.replace(/\.[^.]+$/, '');
+  showDownload(blob, `${base}-${dirTag(c)}.mp4`);
+  const padded = c.outW !== c.inW || c.outH !== c.inH ? ` (1px black added to make the size even)` : '';
+  $('status').textContent = `Done: ${c.outW} × ${c.outH} MP4, ${c.len} s, ${total} frames at ${fps} fps${padded}.`;
 }
 </script>
 <!-- mp4-muxer 5.2.2 (https://github.com/Vanilagy/mp4-muxer), bundled so the tool works offline.
