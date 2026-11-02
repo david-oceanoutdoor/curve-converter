@@ -13,6 +13,10 @@ only in your browser.
 - **Remove gaps:** gapped → clean (4064×2192 → 3888×2160 with the default 16px gaps)
 - **Add gaps:** clean → gapped (reverse). For stills the gaps are transparent in the PNG.
 - **Compress only:** video re-encode at the chosen bitrate, no layout change (video only)
+- **Still image → MP4:** a JPG or PNG held for **10, 20 or 30 seconds** (Length dropdown, shown in
+  this mode) as an H.264 MP4 at the image's own width and height, using the fps setting and the
+  Content bitrate. PNG transparency becomes black; an odd width or height gets 1px added, since
+  H.264 needs even dimensions.
 
 ## Content (dropdown under Direction)
 Sets the video bitrate: **Full-motion video** → 15 Mbps (default), **Mostly stills** → 5 Mbps.
@@ -33,7 +37,8 @@ squeeze width.
 - **Silent video only.** Sources are always silent, so there is no audio path; output MP4s have
   no audio track. (An earlier real-time `MediaRecorder` mode existed only to keep audio and was
   removed.)
-- Output filenames append the mode: `-remove-gaps`, `-add-gaps`, `-squeezed`, `-compressed`.
+- Output filenames append the mode: `-remove-gaps`, `-add-gaps`, `-squeezed`, `-compressed`,
+  or the length for stills turned into video (`-10s`, `-20s`, `-30s`).
 
 ## Test results (headless Chromium 141, Linux, no GPU)
 | Path | Result |
@@ -42,6 +47,7 @@ squeeze width.
 | Frame-accurate seeking | Canvas content matched the source on all 50 frames of a test clip whose brightness encodes the frame number: no off-by-one |
 | Frame-accurate frame count / duration | 50 frames, 2.000 s out for 50 frames, 2.000 s in (remove and compress) |
 | Frame-accurate muxing | Valid MP4 from the bundled muxer |
+| Still image → MP4 | 10 / 20 / 30 s give exactly 10.000 / 20.000 / 30.000 s (250 / 500 / 900 frames at 25 / 25 / 30 fps); output matches the image size (3888×2160 tested); first and last frames match the source within compression noise; odd-sized PNG padded to even with transparency as black |
 | **H.264 encoding** | **Not tested**: open-source Chromium has no H.264 encoder. The pipeline was tested with VP9 swapped in; needs a real run in Chrome or Edge |
 
 ## Known risks / next steps
