@@ -70,11 +70,13 @@
       </select>
     </div>
   </div>
-  <label style="margin-top:12px">Content</label>
-  <select id="content">
-    <option value="15">Full-motion video (15 Mbps)</option>
-    <option value="5">Mostly stills (5 Mbps)</option>
-  </select>
+  <div id="contentRow">
+    <label style="margin-top:12px">Content</label>
+    <select id="content">
+      <option value="15">Full-motion video (15 Mbps)</option>
+      <option value="5">Mostly stills (5 Mbps)</option>
+    </select>
+  </div>
   <details style="margin-top:12px">
   <summary style="cursor:pointer;font-size:13px;color:#555">Settings</summary>
   <div class="grid" style="margin-top:10px">
@@ -109,6 +111,8 @@
 <script>
 const $ = id => document.getElementById(id);
 let file = null;
+const SLIDESHOW_BITRATE = 5e6;   // slideshows are always held stills
+const bitrate = () => $('mode').value === 'slides' ? SLIDESHOW_BITRATE : Math.round((+$('mbps').value || 15) * 1e6);
 
 function cfg() {
   const c = {
@@ -173,17 +177,14 @@ function refreshSizes() {
     const input = c.mode === 'slides' ? `3 JPGs or PNGs, each ${t[0]} × ${t[1]}` : t ? `JPG or PNG, ${t[0]} × ${t[1]}` : 'JPG or PNG';
     const sq = c.screen === 'curve' && c.sq ? `, squeezed to ${c.sqW} + ${t[0] - c.sqW}px black` : '';
     const out = c.mode === 'slides' ? `30-second MP4, 10 s each, ${c.trans === 'fade' ? 'crossfades' : 'hard cuts'}` : `${c.len}-second MP4`;
-    $('sizes').textContent = `${input}  →  ${out}${t ? '' : " at the image's own size"}${sq}, ${$('fps').value} fps, ${$('mbps').value} Mbps.`;
+    $('sizes').textContent = `${input}  →  ${out}${t ? '' : " at the image's own size"}${sq}, ${$('fps').value} fps, ${bitrate() / 1e6} Mbps.`;
     return;
   }
   $('sizes').textContent = `Expected input ${c.inW} × ${c.inH}  →  output ${c.outW} × ${c.outH}  (${c.cols * c.rows} tiles)`;
 }
 // mode and screen refresh via updateModeUI, which sets the screen first
 ['cols','rows','cw','ch','gx','gxl','gy','mbps','sqw','fps','len','sq','trans'].forEach(id => $(id).addEventListener('input', refreshSizes));
-$('mode').addEventListener('input', () => {
-  if ($('mode').value === 'slides') { $('content').value = '5'; $('mbps').value = '5'; }   // held images need little bitrate
-  updateModeUI();
-});
+$('mode').addEventListener('input', updateModeUI);
 $('screen').addEventListener('input', updateModeUI);
 $('content').addEventListener('input', () => { $('mbps').value = $('content').value; refreshSizes(); });
 $('gx').addEventListener('input', () => { if ($('gxl').dataset.touched !== '1') $('gxl').value = $('gx').value; refreshSizes(); });
@@ -206,6 +207,8 @@ function updateModeUI() {
   $('sqRow').style.display = $('screen').value === 'curve' ? '' : 'none';
   $('lenRow').style.display = slidesMode ? 'none' : '';
   $('transRow').style.display = slidesMode ? '' : 'none';
+  // Slideshows always use the fixed stills bitrate, so there's nothing to choose
+  $('contentRow').style.display = $('mbps').parentElement.style.display = slidesMode ? 'none' : '';
   $('drop').style.display = $('info').style.display = slidesMode ? 'none' : '';
   $('slots').style.display = slidesMode ? '' : 'none';
   renderSlots();
@@ -348,7 +351,6 @@ function prepVideo(c, video) {
   return checkSize(video.videoWidth, video.videoHeight, c);
 }
 
-const bitrate = () => Math.round((+$('mbps').value || 15) * 1e6);
 
 // Lowest H.264 High level whose frame-size and macroblock-rate limits fit (spec Table A-1).
 // e.g. 4064×2192 fits level 5.1 at 25 fps but needs 5.2 at 30 fps.
