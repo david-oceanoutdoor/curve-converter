@@ -25,11 +25,13 @@ only in your browser.
   for 10 seconds. Screen is *Curve artwork* (with the Squeeze option) or *Wall Screens*; every
   image must match it exactly or it is refused (the slot is flagged before processing).
   **Transition:** hard cut, or a 0.5 s crossfade centred on each change, so the total stays exactly
-  30 s. Choosing this mode sets Content to Mostly stills (5 Mbps). Each image starts on a keyframe.
+  30 s. Always encoded at 5 Mbps, so the Content dropdown and the Settings bitrate are hidden in
+  this mode. Each image starts on a keyframe.
 
 ## Content (dropdown under Direction)
 Sets the video bitrate: **Full-motion video** → 15 Mbps (default), **Mostly stills** → 5 Mbps.
-The bitrate can still be fine-tuned by hand under Settings.
+The bitrate can still be fine-tuned by hand under Settings. Not shown for the 3-image slideshow,
+which is always 5 Mbps.
 
 ## Settings (collapsed under "Settings")
 Columns, rows, tile size, horizontal gap, "last horizontal gap" (for the 4010px layout:
