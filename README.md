@@ -13,10 +13,19 @@ only in your browser.
 - **Remove gaps:** gapped → clean (4064×2192 → 3888×2160 with the default 16px gaps)
 - **Add gaps:** clean → gapped (reverse). For stills the gaps are transparent in the PNG.
 - **Compress only:** video re-encode at the chosen bitrate, no layout change (video only)
-- **Still image → MP4:** a JPG or PNG held for **10, 20 or 30 seconds** (Length dropdown, shown in
-  this mode) as an H.264 MP4 at the image's own width and height, using the fps setting and the
-  Content bitrate. PNG transparency becomes black; an odd width or height gets 1px added, since
-  H.264 needs even dimensions.
+- **Still image → MP4:** a JPG or PNG held for **10, 20 or 30 seconds** (Length dropdown) as an
+  H.264 MP4, using the fps setting and the Content bitrate. **Screen** sets the size:
+  - *Any size* (default): keeps the image's own size. An odd width or height gets 1px added, since
+    H.264 needs even dimensions.
+  - *Curve artwork (3888 × 2160)*, with an optional **Squeeze** to 3840 + 48px black pad (ticked
+    by default).
+  - *Wall Screens (432 × 1920)*.
+  With a fixed screen, an image of any other size is refused. PNG transparency becomes black.
+- **3-image slideshow → 30 s MP4:** three JPGs or PNGs dropped into Image 1 / 2 / 3 slots, each held
+  for 10 seconds. Screen is *Curve artwork* (with the Squeeze option) or *Wall Screens*; every
+  image must match it exactly or it is refused (the slot is flagged before processing).
+  **Transition:** hard cut, or a 0.5 s crossfade centred on each change, so the total stays exactly
+  30 s. Choosing this mode sets Content to Mostly stills (5 Mbps). Each image starts on a keyframe.
 
 ## Content (dropdown under Direction)
 Sets the video bitrate: **Full-motion video** → 15 Mbps (default), **Mostly stills** → 5 Mbps.
@@ -38,9 +47,11 @@ squeeze width.
   no audio track. (An earlier real-time `MediaRecorder` mode existed only to keep audio and was
   removed.)
 - Output filenames append the mode: `-remove-gaps`, `-add-gaps`, `-squeezed`, `-compressed`,
-  or the length for stills turned into video (`-10s`, `-20s`, `-30s`).
+  or, for stills turned into video, the screen and length (`-10s`, `-curve-squeezed-20s`,
+  `-wall-30s`) or `-curve-slideshow` / `-curve-squeezed-slideshow` / `-wall-slideshow`, named after
+  the first image.
 
-## Test results (headless Chromium 141, Linux, no GPU)
+## Test results (headless Chromium, Linux, no GPU)
 | Path | Result |
 | --- | --- |
 | Stills: remove / add / squeeze | Pixel-exact against a synthetic gapped pattern (16px and 11/12px layouts); remove → add round trip is exact; squeeze pad is pure black |
@@ -48,6 +59,7 @@ squeeze width.
 | Frame-accurate frame count / duration | 50 frames, 2.000 s out for 50 frames, 2.000 s in (remove and compress) |
 | Frame-accurate muxing | Valid MP4 from the bundled muxer |
 | Still image → MP4 | 10 / 20 / 30 s give exactly 10.000 / 20.000 / 30.000 s (250 / 500 / 900 frames at 25 / 25 / 30 fps); output matches the image size (3888×2160 tested); first and last frames match the source within compression noise; odd-sized PNG padded to even with transparency as black |
+| 3-image slideshow | 30.000 s, 750 frames at 25 fps for curve (squeezed and not) and Wall Screens (432×1920); hard cuts land exactly on frames 250 and 500 (10 s, 20 s) with keyframes there; fades blend frames 244–256, about 50/50 at 10 s; squeeze pad is black; wrong-sized images refused with the slot flagged; no horizontal scroll at phone width |
 | **H.264 encoding** | **Not tested**: open-source Chromium has no H.264 encoder. The pipeline was tested with VP9 swapped in; needs a real run in Chrome or Edge |
 
 ## Known risks / next steps

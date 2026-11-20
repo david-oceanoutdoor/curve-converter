@@ -23,6 +23,12 @@
   canvas { max-width: 100%; height: auto; border: 1px solid #dde0e5; background: #222; margin-top: 12px; display: none; }
   a#dl { display: none; margin-top: 12px; }
   .note { font-size: 12px; color: #666; margin-top: 8px; line-height: 1.4; }
+  #slots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .slot { border: 2px dashed #9aa3b2; border-radius: 10px; padding: 12px 8px; text-align: center; color: #555; cursor: pointer; font-size: 12px; min-width: 0; overflow-wrap: anywhere; }
+  .slot.over { background: #eaf1ff; border-color: #3b7cff; }
+  .slot.bad { border-color: #b25a00; color: #b25a00; }
+  .slot img { display: block; max-width: 100%; max-height: 120px; margin: 6px auto; }
+  label.check { font-size: 13px; color: #1a1a1a; margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -37,15 +43,32 @@
     <option value="add">Add gaps (clean → gapped)</option>
     <option value="compress">Compress only (video, keeps layout)</option>
     <option value="still">Still image → MP4 (keeps size)</option>
+    <option value="slides">3-image slideshow → 30 s MP4 (10 s each)</option>
   </select>
   <div id="sizes" class="note"></div>
-  <div id="lenRow" style="display:none">
-    <label style="margin-top:12px">Length</label>
-    <select id="len">
-      <option value="10">10 seconds</option>
-      <option value="20">20 seconds</option>
-      <option value="30">30 seconds</option>
+  <div id="stillOpts" style="display:none">
+    <label style="margin-top:12px">Screen</label>
+    <select id="screen">
+      <option value="any">Any size (keep the image's size)</option>
+      <option value="curve">Curve artwork (3888 × 2160)</option>
+      <option value="wall">Wall Screens (432 × 1920)</option>
     </select>
+    <label class="check" id="sqRow"><input type="checkbox" id="sq" checked> Squeeze to 3840 + 48px black pad</label>
+    <div id="lenRow">
+      <label style="margin-top:12px">Length</label>
+      <select id="len">
+        <option value="10">10 seconds</option>
+        <option value="20">20 seconds</option>
+        <option value="30">30 seconds</option>
+      </select>
+    </div>
+    <div id="transRow">
+      <label style="margin-top:12px">Transition</label>
+      <select id="trans">
+        <option value="cut">Hard cut</option>
+        <option value="fade">Fade (0.5 s crossfade)</option>
+      </select>
+    </div>
   </div>
   <label style="margin-top:12px">Content</label>
   <select id="content">
@@ -73,6 +96,7 @@
 <div class="card">
   <div id="drop">Drop an image or video here, or click to choose a file</div>
   <input type="file" id="file" accept="image/*,video/*" style="display:none">
+  <div id="slots" style="display:none"></div>
   <div id="info"></div>
   <div style="margin-top:12px"><button id="go" disabled>Process</button></div>
   <progress id="prog" value="0" max="1"></progress>
@@ -92,7 +116,9 @@ function cfg() {
     cols: +$('cols').value, rows: +$('rows').value,
     cw: +$('cw').value, ch: +$('ch').value,
     gx: +$('gx').value, gxl: +$('gxl').value, gy: +$('gy').value,
-    len: +$('len').value
+    len: +$('len').value,
+    screen: $('screen').value, sq: $('sq').checked, trans: $('trans').value,
+    sqW: +$('sqw').value
   };
   c.gappedW = c.cols * c.cw + (c.cols - 2) * c.gx + c.gxl;
   c.gappedH = c.rows * c.ch + (c.rows - 1) * c.gy;
@@ -102,14 +128,13 @@ function cfg() {
   c.inW = remove ? c.gappedW : c.cleanW;   c.inH = remove ? c.gappedH : c.cleanH;
   c.outW = remove ? c.cleanW : c.gappedW;  c.outH = remove ? c.cleanH : c.gappedH;
   if (c.mode === 'squeeze') {              // same size in and out
-    c.sqW = +$('sqw').value;
     c.inW = c.outW = c.cleanW;  c.inH = c.outH = c.cleanH;
   }
   return c;
 }
 
 function tiles(c) {
-  if (c.mode === 'compress' || c.mode === 'squeeze' || c.mode === 'still') return [[0, 0, 0, 0]];   // one full-frame "tile"
+  if (c.mode === 'compress' || c.mode === 'squeeze') return [[0, 0, 0, 0]];   // one full-frame "tile"
   const gappedX = col => col * (c.cw + c.gx) + (col === c.cols - 1 ? c.gxl - c.gx : 0);
   const gappedY = row => row * (c.ch + c.gy);
   const list = [];
@@ -143,18 +168,107 @@ function refreshSizes() {
     $('sizes').textContent = `Output keeps the source size and layout; re-encoded at ${$('mbps').value} Mbps (set in Settings).`;
     return;
   }
-  if (c.mode === 'still') {
-    $('sizes').textContent = `JPG or PNG in  →  ${$('len').value}-second MP4 at the image's own size, ${$('fps').value} fps, ${$('mbps').value} Mbps.`;
+  if (c.mode === 'still' || c.mode === 'slides') {
+    const t = stillTarget(c);
+    const input = c.mode === 'slides' ? `3 JPGs or PNGs, each ${t[0]} × ${t[1]}` : t ? `JPG or PNG, ${t[0]} × ${t[1]}` : 'JPG or PNG';
+    const sq = c.screen === 'curve' && c.sq ? `, squeezed to ${c.sqW} + ${t[0] - c.sqW}px black` : '';
+    const out = c.mode === 'slides' ? `30-second MP4, 10 s each, ${c.trans === 'fade' ? 'crossfades' : 'hard cuts'}` : `${c.len}-second MP4`;
+    $('sizes').textContent = `${input}  →  ${out}${t ? '' : " at the image's own size"}${sq}, ${$('fps').value} fps, ${$('mbps').value} Mbps.`;
     return;
   }
   $('sizes').textContent = `Expected input ${c.inW} × ${c.inH}  →  output ${c.outW} × ${c.outH}  (${c.cols * c.rows} tiles)`;
 }
-['mode','cols','rows','cw','ch','gx','gxl','gy','mbps','sqw','fps','len'].forEach(id => $(id).addEventListener('input', refreshSizes));
-$('mode').addEventListener('input', () => { $('lenRow').style.display = $('mode').value === 'still' ? '' : 'none'; });
+// mode and screen refresh via updateModeUI, which sets the screen first
+['cols','rows','cw','ch','gx','gxl','gy','mbps','sqw','fps','len','sq','trans'].forEach(id => $(id).addEventListener('input', refreshSizes));
+$('mode').addEventListener('input', () => {
+  if ($('mode').value === 'slides') { $('content').value = '5'; $('mbps').value = '5'; }   // held images need little bitrate
+  updateModeUI();
+});
+$('screen').addEventListener('input', updateModeUI);
 $('content').addEventListener('input', () => { $('mbps').value = $('content').value; refreshSizes(); });
 $('gx').addEventListener('input', () => { if ($('gxl').dataset.touched !== '1') $('gxl').value = $('gx').value; refreshSizes(); });
 $('gxl').addEventListener('input', () => { $('gxl').dataset.touched = '1'; });
-refreshSizes();
+
+// Fixed screen sizes for stills turned into video; null = keep the image's own size
+function stillTarget(c) {
+  if (c.screen === 'curve') return [c.cleanW, c.cleanH];
+  if (c.screen === 'wall') return [432, 1920];
+  return null;
+}
+const screenName = c => c.screen === 'curve' ? 'Curve artwork' : 'Wall Screens';
+
+function updateModeUI() {
+  const mode = $('mode').value, slidesMode = mode === 'slides';
+  // The slideshow always targets a fixed screen size
+  $('screen').options[0].disabled = slidesMode;
+  if (slidesMode && $('screen').value === 'any') $('screen').value = 'curve';
+  $('stillOpts').style.display = mode === 'still' || slidesMode ? '' : 'none';
+  $('sqRow').style.display = $('screen').value === 'curve' ? '' : 'none';
+  $('lenRow').style.display = slidesMode ? 'none' : '';
+  $('transRow').style.display = slidesMode ? '' : 'none';
+  $('drop').style.display = $('info').style.display = slidesMode ? 'none' : '';
+  $('slots').style.display = slidesMode ? '' : 'none';
+  renderSlots();
+  refreshSizes();
+}
+
+// ---- slideshow image slots ----
+const slides = [null, null, null];   // { file, bmp, url } per slot
+
+function buildSlots() {
+  slides.forEach((_, i) => {
+    const el = document.createElement('div');
+    el.className = 'slot';
+    const input = document.createElement('input');
+    input.type = 'file'; input.accept = 'image/jpeg,image/png'; input.style.display = 'none';
+    input.onchange = e => setSlide(i, e.target.files[0]);
+    el.onclick = () => input.click();
+    el.ondragover = e => { e.preventDefault(); el.classList.add('over'); };
+    el.ondragleave = () => el.classList.remove('over');
+    el.ondrop = e => { e.preventDefault(); el.classList.remove('over'); setSlide(i, e.dataTransfer.files[0]); };
+    $('slots').append(el, input);
+  });
+}
+
+async function setSlide(i, f) {
+  if (!f) return;
+  if (!/^image\/(jpeg|png)$/.test(f.type)) { alert('Slideshow images must be JPG or PNG.'); return; }
+  if (slides[i]) { slides[i].bmp.close(); URL.revokeObjectURL(slides[i].url); }
+  slides[i] = { file: f, bmp: await createImageBitmap(f), url: URL.createObjectURL(f) };
+  $('dl').style.display = 'none';
+  renderSlots();
+}
+
+function renderSlots() {
+  const c = cfg(), t = stillTarget(c);
+  [...$('slots').querySelectorAll('.slot')].forEach((el, i) => {
+    const s = slides[i];
+    el.replaceChildren();
+    el.classList.remove('bad');
+    const title = document.createElement('div');
+    title.textContent = `Image ${i + 1}`;
+    title.style.fontWeight = '600';
+    el.append(title);
+    if (!s) { el.append('Drop a JPG or PNG here, or click to choose'); return; }
+    const img = document.createElement('img');
+    img.src = s.url;
+    const size = document.createElement('div');
+    size.textContent = `${s.bmp.width} × ${s.bmp.height}`;
+    el.append(img, s.file.name, size);
+    if (t && (s.bmp.width !== t[0] || s.bmp.height !== t[1])) {
+      el.classList.add('bad');
+      size.textContent += ` — needs ${t[0]} × ${t[1]}`;
+    }
+  });
+  updateGo();
+}
+
+function updateGo() {
+  $('go').disabled = $('mode').value === 'slides' ? slides.some(s => !s) : !file;
+}
+
+buildSlots();
+updateModeUI();
 
 // ---- file selection ----
 const drop = $('drop');
@@ -169,7 +283,7 @@ function setFile(f) {
   file = f;
   $('info').textContent = `${f.name} (${(f.size / 1048576).toFixed(1)} MB)`;
   $('info').className = '';
-  $('go').disabled = false;
+  updateGo();
   $('dl').style.display = 'none';
 }
 
@@ -195,13 +309,14 @@ $('go').onclick = async () => {
   if (c.cols < 2) { alert('Need at least 2 columns.'); return; }
   $('go').disabled = true;
   try {
-    if (c.mode === 'still') await processStillToVideo(c);
+    if (c.mode === 'slides') await processSlideshow(c);
+    else if (c.mode === 'still') await processStillToVideo(c);
     else if (file.type.startsWith('video/')) await processVideo(c);
     else await processImage(c);
   } catch (e) {
     $('status').textContent = 'Error: ' + e.message;
   }
-  $('go').disabled = false;
+  updateGo();
 };
 
 // ---- stills ----
@@ -220,7 +335,8 @@ async function processImage(c) {
   $('status').textContent = `Done: ${c.outW} × ${c.outH} PNG.`;
 }
 
-const dirTag = c => (c.mode === 'remove' ? 'remove-gaps' : c.mode === 'add' ? 'add-gaps' : c.mode === 'squeeze' ? 'squeezed' : c.mode === 'still' ? `${c.len}s` : 'compressed');
+const dirTag = c => (c.mode === 'remove' ? 'remove-gaps' : c.mode === 'add' ? 'add-gaps' : c.mode === 'squeeze' ? 'squeezed' : c.mode === 'still' ? `${screenTag(c)}${c.len}s` : c.mode === 'slides' ? `${screenTag(c)}slideshow` : 'compressed');
+const screenTag = c => c.screen === 'curve' ? (c.sq ? 'curve-squeezed-' : 'curve-') : c.screen === 'wall' ? 'wall-' : '';
 
 // Compress-only: output = source size, one full-frame copy. Otherwise validate size.
 function prepVideo(c, video) {
@@ -246,7 +362,7 @@ function avcCodec(w, h, fps) {
 }
 
 // H.264 MP4 writer shared by the video and still-to-video paths.
-// add(canvas, i) encodes frame i; finish() returns the MP4 blob.
+// add(canvas, i, key) encodes frame i (key forces a keyframe); finish() returns the MP4 blob.
 async function openMp4(w, h, fps) {
   const encConfig = { codec: avcCodec(w, h, fps), width: w, height: h, bitrate: bitrate(), framerate: fps };
   const support = await VideoEncoder.isConfigSupported(encConfig);
@@ -263,10 +379,10 @@ async function openMp4(w, h, fps) {
   encoder.configure(encConfig);
 
   return {
-    async add(cv, i) {
+    async add(cv, i, key = false) {
       if (encErr) throw encErr;
       const frame = new VideoFrame(cv, { timestamp: Math.round(i * 1e6 / fps), duration: Math.round(1e6 / fps) });
-      encoder.encode(frame, { keyFrame: i % 120 === 0 });
+      encoder.encode(frame, { keyFrame: key || i % 120 === 0 });
       frame.close();
       while (encoder.encodeQueueSize > 6) await new Promise(r => setTimeout(r, 5));
     },
@@ -329,20 +445,38 @@ async function processVideo(c) {
   $('status').textContent = `Done: ${c.outW} × ${c.outH} MP4, ${total} frames at ${fps} fps.`;
 }
 
-// ---- still image → MP4: the same frame held for 10/20/30 s at the image's own size ----
+// Draws a still for video: black behind any PNG transparency, and the curve squeeze if ticked
+function drawStill(ctx, bmp, c) {
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, c.outW, c.outH);
+  if (c.screen === 'curve' && c.sq) {
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bmp, 0, 0, bmp.width, bmp.height, 0, 0, c.sqW, c.outH);
+  } else {
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(bmp, 0, 0);
+  }
+}
+
+// Refuses an image that doesn't match the chosen screen size
+function checkStill(bmp, c, label) {
+  const t = stillTarget(c);
+  if (t && (bmp.width !== t[0] || bmp.height !== t[1]))
+    throw new Error(`${label} is ${bmp.width} × ${bmp.height}; ${screenName(c)} needs ${t[0]} × ${t[1]}.`);
+}
+
+// ---- still image → MP4: the same frame held for 10/20/30 s ----
 async function processStillToVideo(c) {
   if (!/^image\/(jpeg|png)$/.test(file.type)) throw new Error('Still image → MP4 needs a JPG or PNG file.');
   const fps = videoFps();
   const bmp = await createImageBitmap(file);
+  checkStill(bmp, c, 'The image');
   // H.264 needs even dimensions: an odd width or height gets one black pixel added
-  c.inW = c.cw = bmp.width;  c.inH = c.ch = bmp.height;
+  c.inW = bmp.width;  c.inH = bmp.height;
   c.outW = bmp.width + (bmp.width & 1);  c.outH = bmp.height + (bmp.height & 1);
 
   const cv = $('out');
   cv.width = c.outW; cv.height = c.outH; cv.style.display = 'block';
-  const ctx = cv.getContext('2d');
-  ctx.imageSmoothingEnabled = false;
-  drawFrame(bmp, ctx, tiles(c), c, true);   // black behind any PNG transparency
+  drawStill(cv.getContext('2d'), bmp, c);
 
   const mp4 = await openMp4(c.outW, c.outH, fps);
   const total = Math.round(c.len * fps);
@@ -360,6 +494,53 @@ async function processStillToVideo(c) {
   showDownload(blob, `${base}-${dirTag(c)}.mp4`);
   const padded = c.outW !== c.inW || c.outH !== c.inH ? ` (1px black added to make the size even)` : '';
   $('status').textContent = `Done: ${c.outW} × ${c.outH} MP4, ${c.len} s, ${total} frames at ${fps} fps${padded}.`;
+}
+
+// ---- 3-image slideshow → 30 s MP4: 10 s per image, hard cuts or 0.5 s crossfades ----
+async function processSlideshow(c) {
+  const fps = videoFps();
+  slides.forEach((s, k) => checkStill(s.bmp, c, `Image ${k + 1}`));
+  [c.outW, c.outH] = stillTarget(c);
+
+  // Render each image once; the loop only copies or blends these
+  const pics = slides.map(s => {
+    const pc = document.createElement('canvas');
+    pc.width = c.outW; pc.height = c.outH;
+    drawStill(pc.getContext('2d'), s.bmp, c);
+    return pc;
+  });
+  const cv = $('out');
+  cv.width = c.outW; cv.height = c.outH; cv.style.display = 'block';
+  const ctx = cv.getContext('2d');
+
+  const seg = Math.round(10 * fps), total = 3 * seg;
+  const fadeN = c.trans === 'fade' ? Math.round(0.5 * fps) : 0;   // fade frames, centred on each change
+  const mp4 = await openMp4(c.outW, c.outH, fps);
+  const prog = $('prog');
+  prog.style.display = 'block';
+  let shown = -1;   // index of the image currently on the canvas, -1 after a blend
+  for (let i = 0; i < total; i++) {
+    const b = Math.round(i / seg), start = b * seg - Math.floor(fadeN / 2);   // nearest change and its fade start
+    if (b >= 1 && b <= 2 && i >= start && i < start + fadeN) {
+      ctx.globalAlpha = 1; ctx.drawImage(pics[b - 1], 0, 0);
+      ctx.globalAlpha = (i - start + 0.5) / fadeN; ctx.drawImage(pics[b], 0, 0);
+      ctx.globalAlpha = 1;
+      shown = -1;
+      await mp4.add(cv, i);
+    } else {
+      const k = Math.floor(i / seg), fresh = k !== shown;
+      if (fresh) { ctx.drawImage(pics[k], 0, 0); shown = k; }
+      await mp4.add(cv, i, fresh);   // keyframe where each image starts, so cuts are clean
+    }
+    prog.value = i / total;
+    if (i % 25 === 0) $('status').textContent = `Frame ${i + 1} / ${total}`;
+  }
+  const blob = await mp4.finish();
+  prog.style.display = 'none';
+
+  const base = slides[0].file.name.replace(/\.[^.]+$/, '');
+  showDownload(blob, `${base}-${dirTag(c)}.mp4`);
+  $('status').textContent = `Done: ${c.outW} × ${c.outH} MP4, 30 s (3 × 10 s, ${c.trans === 'fade' ? 'crossfades' : 'hard cuts'}), ${total} frames at ${fps} fps.`;
 }
 </script>
 <!-- mp4-muxer 5.2.2 (https://github.com/Vanilagy/mp4-muxer), bundled so the tool works offline.
