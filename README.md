@@ -10,7 +10,9 @@ only in your browser.
 
 ## Modes (Direction dropdown)
 - **Squeeze:** 3888×2160 → squeezed to 3840 wide + 48px black pad on the right, output 3888×2160. Selected by default.
-- **Remove gaps:** gapped → clean (4064×2192 → 3888×2160 with the default 16px gaps)
+- **Remove gaps:** gapped → clean (4064×2192 → 3888×2160 with the default 16px gaps). Optional
+  **Squeeze** tickbox (unticked by default) then squeezes the clean frame to 3840 + 48px black pad,
+  exactly as Squeeze mode would; output stays 3888×2160. Works for stills and video.
 - **Add gaps:** clean → gapped (reverse). For stills the gaps are transparent in the PNG.
 - **Compress only:** video re-encode at the chosen bitrate, no layout change (video only)
 - **Still image → MP4:** a JPG or PNG held for **10, 20 or 30 seconds** (Length dropdown) as an
@@ -48,7 +50,7 @@ squeeze width.
 - **Silent video only.** Sources are always silent, so there is no audio path; output MP4s have
   no audio track. (An earlier real-time `MediaRecorder` mode existed only to keep audio and was
   removed.)
-- Output filenames append the mode: `-remove-gaps`, `-add-gaps`, `-squeezed`, `-compressed`,
+- Output filenames append the mode: `-remove-gaps` (`-remove-gaps-squeezed` with Squeeze ticked), `-add-gaps`, `-squeezed`, `-compressed`,
   or, for stills turned into video, the screen and length (`-10s`, `-curve-squeezed-20s`,
   `-wall-30s`) or `-curve-slideshow` / `-curve-squeezed-slideshow` / `-wall-slideshow`, named after
   the first image.
@@ -57,6 +59,7 @@ squeeze width.
 | Path | Result |
 | --- | --- |
 | Stills: remove / add / squeeze | Pixel-exact against a synthetic gapped pattern (16px and 11/12px layouts); remove → add round trip is exact; squeeze pad is pure black |
+| Remove gaps + Squeeze | Pixel-identical to running Remove gaps and then Squeeze mode on the result; no gap pixels left; 48px pad black; video 50 frames, 2.000 s |
 | Frame-accurate seeking | Canvas content matched the source on all 50 frames of a test clip whose brightness encodes the frame number: no off-by-one |
 | Frame-accurate frame count / duration | 50 frames, 2.000 s out for 50 frames, 2.000 s in (remove and compress) |
 | Frame-accurate muxing | Valid MP4 from the bundled muxer |

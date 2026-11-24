@@ -46,6 +46,7 @@
     <option value="slides">3-image slideshow → 30 s MP4 (10 s each)</option>
   </select>
   <div id="sizes" class="note"></div>
+  <label class="check" id="rmSqRow" style="display:none"><input type="checkbox" id="rmSq"> Squeeze to 3840 + 48px black pad</label>
   <div id="stillOpts" style="display:none">
     <label style="margin-top:12px">Screen</label>
     <select id="screen">
@@ -122,7 +123,7 @@ function cfg() {
     gx: +$('gx').value, gxl: +$('gxl').value, gy: +$('gy').value,
     len: +$('len').value,
     screen: $('screen').value, sq: $('sq').checked, trans: $('trans').value,
-    sqW: +$('sqw').value
+    sqW: +$('sqw').value, rmSq: $('rmSq').checked
   };
   c.gappedW = c.cols * c.cw + (c.cols - 2) * c.gx + c.gxl;
   c.gappedH = c.rows * c.ch + (c.rows - 1) * c.gy;
@@ -157,6 +158,16 @@ function drawFrame(src, ctx, list, c, fillBg) {
     ctx.drawImage(src, 0, 0, c.inW, c.inH, 0, 0, c.sqW, c.outH);
     return;
   }
+  if (c.mode === 'remove' && c.rmSq) {
+    // Remove the gaps onto a clean-size scratch canvas, then squeeze that exactly as Squeeze mode does
+    const tmp = drawFrame.tmp ||= document.createElement('canvas');
+    if (tmp.width !== c.cleanW || tmp.height !== c.cleanH) { tmp.width = c.cleanW; tmp.height = c.cleanH; }
+    const tctx = tmp.getContext('2d');
+    tctx.imageSmoothingEnabled = false;
+    drawFrame(src, tctx, list, { ...c, rmSq: false }, true);
+    drawFrame(tmp, ctx, list, { ...c, mode: 'squeeze', inW: c.cleanW, inH: c.cleanH }, true);
+    return;
+  }
   if (fillBg) { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, c.outW, c.outH); }
   else ctx.clearRect(0, 0, c.outW, c.outH);
   for (const [sx, sy, dx, dy] of list) ctx.drawImage(src, sx, sy, c.cw, c.ch, dx, dy, c.cw, c.ch);
@@ -180,10 +191,11 @@ function refreshSizes() {
     $('sizes').textContent = `${input}  →  ${out}${t ? '' : " at the image's own size"}${sq}, ${$('fps').value} fps, ${bitrate() / 1e6} Mbps.`;
     return;
   }
-  $('sizes').textContent = `Expected input ${c.inW} × ${c.inH}  →  output ${c.outW} × ${c.outH}  (${c.cols * c.rows} tiles)`;
+  const sq = c.mode === 'remove' && c.rmSq ? `, squeezed to ${c.sqW} + ${c.outW - c.sqW}px black` : '';
+  $('sizes').textContent = `Expected input ${c.inW} × ${c.inH}  →  output ${c.outW} × ${c.outH}${sq}  (${c.cols * c.rows} tiles)`;
 }
 // mode and screen refresh via updateModeUI, which sets the screen first
-['cols','rows','cw','ch','gx','gxl','gy','mbps','sqw','fps','len','sq','trans'].forEach(id => $(id).addEventListener('input', refreshSizes));
+['cols','rows','cw','ch','gx','gxl','gy','mbps','sqw','fps','len','sq','trans','rmSq'].forEach(id => $(id).addEventListener('input', refreshSizes));
 $('mode').addEventListener('input', updateModeUI);
 $('screen').addEventListener('input', updateModeUI);
 $('content').addEventListener('input', () => { $('mbps').value = $('content').value; refreshSizes(); });
@@ -204,6 +216,7 @@ function updateModeUI() {
   $('screen').options[0].disabled = slidesMode;
   if (slidesMode && $('screen').value === 'any') $('screen').value = 'curve';
   $('stillOpts').style.display = mode === 'still' || slidesMode ? '' : 'none';
+  $('rmSqRow').style.display = mode === 'remove' ? '' : 'none';
   $('sqRow').style.display = $('screen').value === 'curve' ? '' : 'none';
   $('lenRow').style.display = slidesMode ? 'none' : '';
   $('transRow').style.display = slidesMode ? '' : 'none';
@@ -338,7 +351,7 @@ async function processImage(c) {
   $('status').textContent = `Done: ${c.outW} × ${c.outH} PNG.`;
 }
 
-const dirTag = c => (c.mode === 'remove' ? 'remove-gaps' : c.mode === 'add' ? 'add-gaps' : c.mode === 'squeeze' ? 'squeezed' : c.mode === 'still' ? `${screenTag(c)}${c.len}s` : c.mode === 'slides' ? `${screenTag(c)}slideshow` : 'compressed');
+const dirTag = c => (c.mode === 'remove' ? (c.rmSq ? 'remove-gaps-squeezed' : 'remove-gaps') : c.mode === 'add' ? 'add-gaps' : c.mode === 'squeeze' ? 'squeezed' : c.mode === 'still' ? `${screenTag(c)}${c.len}s` : c.mode === 'slides' ? `${screenTag(c)}slideshow` : 'compressed');
 const screenTag = c => c.screen === 'curve' ? (c.sq ? 'curve-squeezed-' : 'curve-') : c.screen === 'wall' ? 'wall-' : '';
 
 // Compress-only: output = source size, one full-frame copy. Otherwise validate size.
